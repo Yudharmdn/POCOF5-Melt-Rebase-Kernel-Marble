@@ -511,7 +511,9 @@ jobs:
             echo "==> SUSFS: detected version ${SUSFS_VERSION_TAG:-unknown} from susfs.h"
 
             cd ..
-            patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+            patch -p1 --fuzz=3 -N --no-backup-if-mismatch < 50_add_susfs_in_gki-android12-5.10.patch
+            find . -name "*.rej" -delete
+            find . -name "*.orig" -delete
             echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/marble_defconfig
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/marble_defconfig
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/marble_defconfig
