@@ -908,13 +908,15 @@ jobs:
            |:---|:---|
            | 📱 Device | POCO F5 (marble) • Redmi Note 12 Turbo (marble) |
            | 🟠 ROM Support | HyperOS,ColorOS,OxygenOS |
-           | 🖥️ Kernel Name | ${KERNEL_NAME}
-           | 🧰 Kernel Base | ${KERNEL_BASE_VERSION} |
+           | 🧰 Kernel Name | ${KERNEL_NAME}
+           | 🔧 Kernel Base | ${KERNEL_BASE_VERSION} |
            | 🛠️ Build Scope | ZIP |
            | 🧬 Build Modes in this run | ${MODES_LABEL} |
            | 📦 Source | ${{ inputs.kernel_source }} |
            | 🔗 Kernel branch | ${{ inputs.kernel_branch }}@[${KERNEL_COMMIT}](${KERNEL_COMMIT_URL})
-           | 🔧 SuSFS Version | ${susfs_checkbox} 
+           | ⚙️ SuSFS Version | ${susfs_checkbox} 
+           | 🛡️ Baseband Guard | Supported (Full Only) |
+           | 🖥️ Droidspaces | Supported (Full Only) |
            | ⚙️ Re-Kernel (Netlink) | ${rekernel_netlink_checkbox}
            | ⚙️ Re-Kernel (eBPF) | ${rekernel_ebpf_checkbox}
            | 🗂️ NoMount | ${nomount_checkbox}
