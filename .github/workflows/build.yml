@@ -80,7 +80,7 @@ on:
         default: true
 
       susfs_commit:
-        description: "Custom susfs4ksu commit, Leave empty to use the latest commit on gki-android12-5.10."
+        description: "Custom susfs4ksu commit, Leave empty to use the latest commit on gki-android12-5.10-dev."
         required: false
         type: string
         default: ""
@@ -479,22 +479,22 @@ jobs:
 
           if [[ "${{ env.SUSFS }}" == true ]]; then
             if [[ -n "${{ inputs.susfs_commit }}" ]]; then
-              git clone -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git susfs
+              git clone -b gki-android12-5.10-dev https://gitlab.com/simonpunk/susfs4ksu.git susfs
               cd susfs
               git checkout "${{ inputs.susfs_commit }}"
               SUSFS_COMMIT=$(git rev-parse --short HEAD)
               echo "SUSFS_COMMIT=${SUSFS_COMMIT}" >> $GITHUB_ENV
               SUSFS_COMMIT_URL="https://gitlab.com/simonpunk/susfs4ksu/-/commit/${SUSFS_COMMIT}"
               echo "SUSFS_COMMIT_URL=${SUSFS_COMMIT_URL}" >> $GITHUB_ENV
-              echo "==> SUSFS: using custom commit ${SUSFS_COMMIT} on branch gki-android12-5.10 (${SUSFS_COMMIT_URL})"
+              echo "==> SUSFS: using custom commit ${SUSFS_COMMIT} on branch gki-android12-5.10-dev (${SUSFS_COMMIT_URL})"
             else
-              git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git susfs
+              git clone --depth=1 -b gki-android12-5.10-dev https://gitlab.com/simonpunk/susfs4ksu.git susfs
               cd susfs
               SUSFS_COMMIT=$(git rev-parse --short HEAD)
               echo "SUSFS_COMMIT=${SUSFS_COMMIT}" >> $GITHUB_ENV
               SUSFS_COMMIT_URL="https://gitlab.com/simonpunk/susfs4ksu/-/commit/${SUSFS_COMMIT}"
               echo "SUSFS_COMMIT_URL=${SUSFS_COMMIT_URL}" >> $GITHUB_ENV
-              echo "==> SUSFS: using latest commit ${SUSFS_COMMIT} on branch gki-android12-5.10 (${SUSFS_COMMIT_URL})"
+              echo "==> SUSFS: using latest commit ${SUSFS_COMMIT} on branch gki-android12-5.10-dev (${SUSFS_COMMIT_URL})"
             fi
             cp ./kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ..
             cp ./kernel_patches/fs/* ../fs/
