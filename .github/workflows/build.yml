@@ -10,17 +10,14 @@ on:
         default: "https://github.com/yudharn/Pzqqt-Melt-Rebase"
         options:
           - https://github.com/yudharn/Pzqqt-Melt-Rebase
-          - https://github.com/Yudharmdn/Guxin12-Melt-Rebase
-          - https://github.com/Pzqqt/android_kernel_xiaomi_marble
 
       kernel_branch:
         description: "Branch on kernel_source above"
         required: true
         type: choice
-        default: "melt-rebase"
+        default: "Yudharn-melt-rebase"
         options:
           - melt-rebase
-          - melt-Guxin12-A
           - Yudharn-melt-rebase
 
       manager_official_kernelsu:
