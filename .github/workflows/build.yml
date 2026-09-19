@@ -164,7 +164,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         SOC: marble
         CCACHE_KEY: ccache-ecsv3-marble-sm7475
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: write
@@ -779,7 +779,7 @@ jobs:
     needs: Build_Kernel_Marble
 
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
