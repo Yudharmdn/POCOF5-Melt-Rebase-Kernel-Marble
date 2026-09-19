@@ -10,17 +10,14 @@ on:
         default: "https://github.com/yudharn/Pzqqt-Melt-Rebase"
         options:
           - https://github.com/yudharn/Pzqqt-Melt-Rebase
-          - https://github.com/Yudharmdn/Guxin12-Melt-Rebase
-          - https://github.com/Pzqqt/android_kernel_xiaomi_marble
 
       kernel_branch:
         description: "Branch on kernel_source above"
         required: true
         type: choice
-        default: "melt-rebase"
+        default: "Yudharn-melt-rebase"
         options:
           - melt-rebase
-          - melt-Guxin12-A
           - Yudharn-melt-rebase
 
       manager_official_kernelsu:
@@ -85,17 +82,8 @@ on:
         type: string
         default: ""
 
-      nomount_branch:
-        description: "Branch on maxsteeel/nomount to build from. Ignored if nomount_commit below is set."
-        required: true
-        type: choice
-        default: "master"
-        options:
-          - master
-          - dev
-
       nomount_commit:
-        description: "Custom NoMount commit or tag — overrides nomount_branch above. Leave empty to use the branch selected above."
+        description: "Custom NoMount commit or tag. Leave empty to use the latest commit on master."
         required: false
         type: string
         default: ""
@@ -152,8 +140,99 @@ jobs:
           echo "==> Build modes selected for this run: ${MODES[*]} (each ticked mode is built for every checked manager)"
           echo "modes=${MODES_JSON}" >> "$GITHUB_OUTPUT"
 
-  Build_Kernel_Marble:
+  Download_Toolchain:
     needs: Determine_Matrix
+    name: Download Clang/LLVM Toolchain (shared)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      llvm_tag: ${{ steps.resolve.outputs.llvm_tag }}
+      clang_url: ${{ steps.resolve.outputs.clang_url }}
+      clang_archive: ${{ steps.resolve.outputs.clang_archive }}
+    steps:
+      - name: Resolve latest LLVM/Clang release
+        id: resolve
+        run: |
+          set -euo pipefail
+
+          echo "==> Querying latest stable LLVM release..."
+
+          LLVM_JSON=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/llvm/llvm-project/releases/latest)
+
+          LLVM_TAG=$(echo "$LLVM_JSON" | jq -r '.tag_name')
+
+          CLANG_URL=$(echo "$LLVM_JSON" | jq -r '
+            .assets[]
+            | select(.name | test("Linux-X64\\.tar\\.xz$"))
+            | .browser_download_url
+          ' | head -n 1)
+
+          if [[ -z "$LLVM_TAG" || "$LLVM_TAG" == "null" ]]; then
+            echo "::error::Failed to determine latest LLVM release tag."
+            exit 1
+          fi
+
+          if [[ -z "$CLANG_URL" || "$CLANG_URL" == "null" ]]; then
+            echo "::error::Could not find Linux-X64.tar.xz asset in LLVM release ${LLVM_TAG}."
+            echo "Available assets:"
+            echo "$LLVM_JSON" | jq -r '.assets[].name'
+            exit 1
+          fi
+
+          CLANG_ARCHIVE=$(basename "$CLANG_URL")
+
+          echo "llvm_tag=${LLVM_TAG}" >> "$GITHUB_OUTPUT"
+          echo "clang_url=${CLANG_URL}" >> "$GITHUB_OUTPUT"
+          echo "clang_archive=${CLANG_ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+          echo "==> Latest LLVM release: ${LLVM_TAG}"
+          echo "==> Download URL: ${CLANG_URL}"
+
+      - name: Restore cached Clang/LLVM archive
+        id: cache-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: toolchains/${{ steps.resolve.outputs.clang_archive }}
+          key: llvm-toolchain-${{ steps.resolve.outputs.llvm_tag }}
+
+      - name: Download Clang/LLVM archive (cache miss only)
+        if: ${{ steps.cache-restore.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p toolchains
+          wget -q "${{ steps.resolve.outputs.clang_url }}" -O "toolchains/${{ steps.resolve.outputs.clang_archive }}"
+          echo "==> Downloaded size: $(du -h "toolchains/${{ steps.resolve.outputs.clang_archive }}" | cut -f1)"
+
+      - name: Save Clang/LLVM archive to cache
+        if: ${{ always() && steps.cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: toolchains/${{ steps.resolve.outputs.clang_archive }}
+          key: llvm-toolchain-${{ steps.resolve.outputs.llvm_tag }}
+
+      - name: Report toolchain source
+        run: |
+          if [[ "${{ steps.cache-restore.outputs.cache-hit }}" == "true" ]]; then
+            echo "==> Clang/LLVM ${{ steps.resolve.outputs.llvm_tag }} restored from cache — download skipped."
+          else
+            echo "==> Clang/LLVM ${{ steps.resolve.outputs.llvm_tag }} downloaded fresh and cached for the next run."
+          fi
+
+      - name: Upload toolchain archive as shared artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: llvm-toolchain-archive
+          path: toolchains/${{ steps.resolve.outputs.clang_archive }}
+          if-no-files-found: error
+          retention-days: 1
+
+  Build_Kernel_Marble:
+    needs: [Determine_Matrix, Download_Toolchain]
     name: Build Kernel (${{ matrix.ksu_type }} / ${{ matrix.build_mode }})
     strategy:
       fail-fast: false
@@ -265,56 +344,29 @@ jobs:
           echo "==> Detected kernel base version: ${KERNEL_BASE_VERSION}"
           cd ..
 
-      - name: Download Latest Clang/LLVM Toolchain
+      - name: Download shared Clang/LLVM toolchain artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: llvm-toolchain-archive
+          path: toolchains
+
+      - name: Extract Clang/LLVM toolchain
         id: clang
         run: |
           set -euo pipefail
 
+          echo "LLVM_TAG=${{ needs.Download_Toolchain.outputs.llvm_tag }}" >> "$GITHUB_ENV"
+          echo "CLANG_URL=${{ needs.Download_Toolchain.outputs.clang_url }}" >> "$GITHUB_ENV"
+          echo "CLANG_ARCHIVE=${{ needs.Download_Toolchain.outputs.clang_archive }}" >> "$GITHUB_ENV"
+
           mkdir -p toolchains
           cd toolchains
-
-          echo "==> Querying latest stable LLVM release..."
-
-          LLVM_JSON=$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/llvm/llvm-project/releases/latest)
-
-          LLVM_TAG=$(echo "$LLVM_JSON" | jq -r '.tag_name')
-
-          CLANG_URL=$(echo "$LLVM_JSON" | jq -r '
-            .assets[]
-            | select(.name | test("Linux-X64\\.tar\\.xz$"))
-            | .browser_download_url
-          ' | head -n 1)
-
-          if [[ -z "$LLVM_TAG" || "$LLVM_TAG" == "null" ]]; then
-            echo "::error::Failed to determine latest LLVM release tag."
-            exit 1
-          fi
-
-          if [[ -z "$CLANG_URL" || "$CLANG_URL" == "null" ]]; then
-            echo "::error::Could not find Linux-X64.tar.xz asset in LLVM release ${LLVM_TAG}."
-            echo "Available assets:"
-            echo "$LLVM_JSON" | jq -r '.assets[].name'
-            exit 1
-          fi
-
-          CLANG_ARCHIVE=$(basename "$CLANG_URL")
-
-          echo "LLVM_TAG=${LLVM_TAG}" >> "$GITHUB_ENV"
-          echo "CLANG_URL=${CLANG_URL}" >> "$GITHUB_ENV"
-          echo "CLANG_ARCHIVE=${CLANG_ARCHIVE}" >> "$GITHUB_ENV"
-
-          echo "==> Latest LLVM release: ${LLVM_TAG}"
-          echo "==> Download URL: ${CLANG_URL}"
-
-          wget -q "$CLANG_URL" -O "$CLANG_ARCHIVE"
           mkdir llvm-toolchain
-          tar -xJf "$CLANG_ARCHIVE" -C llvm-toolchain --strip-components=1 >/dev/null 2>&1
-          rm -f "$CLANG_ARCHIVE"
+          tar -xJf "${{ needs.Download_Toolchain.outputs.clang_archive }}" -C llvm-toolchain --strip-components=1 >/dev/null 2>&1
+          rm -f "${{ needs.Download_Toolchain.outputs.clang_archive }}"
 
-          echo "==> Downloaded Clang version:"
+          echo "==> Using shared Clang/LLVM toolchain: ${{ needs.Download_Toolchain.outputs.llvm_tag }}"
+          echo "==> Extracted Clang version:"
           llvm-toolchain/bin/clang --version
 
       - name: Configure ccache dir and key
@@ -563,8 +615,8 @@ jobs:
               echo "==> NoMount: using custom commit/tag ${{ inputs.nomount_commit }}"
               curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s "${{ inputs.nomount_commit }}"
             else
-              echo "==> NoMount: using branch ${{ inputs.nomount_branch }}"
-              curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s "${{ inputs.nomount_branch }}"
+              echo "==> NoMount: using latest commit on master"
+              curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s master
             fi
 
             if [[ -d "NoMount/.git" ]]; then
