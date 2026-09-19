@@ -253,13 +253,10 @@ jobs:
           echo "==> Detected kernel base version: ${KERNEL_BASE_VERSION}"
           cd ..
 
-      - name: Download Latest Clang/LLVM Toolchain
-        id: clang
+      - name: Resolve latest LLVM/Clang release
+        id: resolve
         run: |
           set -euo pipefail
-
-          mkdir -p toolchains
-          cd toolchains
 
           echo "==> Querying latest stable LLVM release..."
 
@@ -295,15 +292,38 @@ jobs:
           echo "CLANG_ARCHIVE=${CLANG_ARCHIVE}" >> "$GITHUB_ENV"
 
           echo "==> Latest LLVM release: ${LLVM_TAG}"
-          echo "==> Download URL: ${CLANG_URL}"
 
+      - name: Restore cached Clang/LLVM toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: toolchains/llvm-toolchain
+          key: llvm-toolchain-${{ env.LLVM_TAG }}
+
+      - name: Download & extract Clang/LLVM toolchain (cache miss only)
+        if: ${{ steps.toolchain-cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          echo "==> Cache miss for ${LLVM_TAG} — downloading from ${CLANG_URL}"
+          mkdir -p toolchains
+          cd toolchains
           wget -q "$CLANG_URL" -O "$CLANG_ARCHIVE"
           mkdir llvm-toolchain
           tar -xJf "$CLANG_ARCHIVE" -C llvm-toolchain --strip-components=1 >/dev/null 2>&1
           rm -f "$CLANG_ARCHIVE"
 
-          echo "==> Downloaded Clang version:"
-          llvm-toolchain/bin/clang --version
+      - name: Save Clang/LLVM toolchain to cache
+        if: ${{ always() && steps.toolchain-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: toolchains/llvm-toolchain
+          key: llvm-toolchain-${{ env.LLVM_TAG }}
+
+      - name: Report Clang/LLVM toolchain
+        id: clang
+        run: |
+          echo "==> Using Clang/LLVM toolchain: ${LLVM_TAG} (cache-hit: ${{ steps.toolchain-cache.outputs.cache-hit }})"
+          toolchains/llvm-toolchain/bin/clang --version
 
       - name: Configure ccache dir and key
         run: |
@@ -942,6 +962,7 @@ jobs:
 
            ---
           " "${ASSETS[@]}"
+
 
 
 
