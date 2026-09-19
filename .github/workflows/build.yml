@@ -85,8 +85,17 @@ on:
         type: string
         default: ""
 
+      nomount_branch:
+        description: "Branch on maxsteeel/nomount to build from. Ignored if nomount_commit below is set."
+        required: true
+        type: choice
+        default: "master"
+        options:
+          - master
+          - dev
+
       nomount_commit:
-        description: "Custom NoMount commit or tag. Leave empty to use the latest commit on master."
+        description: "Custom NoMount commit or tag — overrides nomount_branch above. Leave empty to use the branch selected above."
         required: false
         type: string
         default: ""
@@ -155,7 +164,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         SOC: marble
         CCACHE_KEY: ccache-ecsv3-marble-sm7475
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: write
@@ -554,8 +563,8 @@ jobs:
               echo "==> NoMount: using custom commit/tag ${{ inputs.nomount_commit }}"
               curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s "${{ inputs.nomount_commit }}"
             else
-              echo "==> NoMount: using latest commit on master"
-              curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s master
+              echo "==> NoMount: using branch ${{ inputs.nomount_branch }}"
+              curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/master/kernel/setup.sh | bash -s "${{ inputs.nomount_branch }}"
             fi
 
             if [[ -d "NoMount/.git" ]]; then
@@ -770,7 +779,7 @@ jobs:
     needs: Build_Kernel_Marble
 
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
@@ -945,6 +954,7 @@ jobs:
 
            ---
           " "${ASSETS[@]}"
+
 
 
 
