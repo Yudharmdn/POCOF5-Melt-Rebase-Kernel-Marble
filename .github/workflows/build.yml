@@ -24,13 +24,13 @@ on:
         description: "Build Official-KernelSU"
         required: true
         type: boolean
-        default: true
+        default: false
 
       manager_kernelsu_next:
         description: "Build KernelSU-Next"
         required: true
         type: boolean
-        default: true
+        default: false
 
       manager_kowsu:
         description: "Build KowSU"
@@ -68,7 +68,7 @@ on:
         description: "Full build — enable ALL features (SuSFS, NoMount, BBG, Re-Kernel Netlink, Re-Kernel eBPF, DroidSpaces)"
         required: true
         type: boolean
-        default: true
+        default: false
 
       core_build:
         description: "Core build — the essentials (SuSFS, NoMount, Re-Kernel Netlink, Re-Kernel eBPF); BBG and DroidSpaces stay off"
