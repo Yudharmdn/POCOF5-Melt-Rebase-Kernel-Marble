@@ -468,7 +468,13 @@ jobs:
                 curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
               fi
                 echo "==> ReSukiSU: pulling submodules"
-                env -u CI -u GITHUB_ACTIONS bash ./KernelSU/kernel/setup.sh --submodule
+                KSU_DIRS_AFTER_SUB=$(ls -d */ 2>/dev/null | sort || true)
+                KSU_SUBMODULE_DIR=$(comm -13 <(echo "$KSU_DIRS_BEFORE") <(echo "$KSU_DIRS_AFTER_SUB") | head -n1 | sed 's:/$::')
+                if [[ -n "$KSU_SUBMODULE_DIR" && -f "${KSU_SUBMODULE_DIR}/kernel/setup.sh" ]]; then
+                  env -u CI -u GITHUB_ACTIONS bash "${KSU_SUBMODULE_DIR}/kernel/setup.sh" --submodule
+                else
+                  echo "::warning::Could not detect the ReSukiSU source dir for the submodule pull; continuing without it."
+                fi
               ;;
 
             "SukiSUUltra")
