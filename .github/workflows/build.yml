@@ -1,9 +1,6 @@
 name: Compile Kernel - POCO F5 (Marble)
 
 on:
-  schedule:
-    # Setiap Senin pukul 02:00 UTC (09:00 WIB) — build otomatis mingguan
-    - cron: "0 2 * * 1"
   workflow_dispatch:
     inputs:
       kernel_source:
@@ -27,13 +24,13 @@ on:
         description: "Build Official-KernelSU"
         required: true
         type: boolean
-        default: true
+        default: false
 
       manager_kernelsu_next:
         description: "Build KernelSU-Next"
         required: true
         type: boolean
-        default: true
+        default: false
 
       manager_kowsu:
         description: "Build KowSU"
@@ -71,7 +68,7 @@ on:
         description: "Full build — enable ALL features (SuSFS, NoMount, BBG, Re-Kernel Netlink, Re-Kernel eBPF, DroidSpaces)"
         required: true
         type: boolean
-        default: true
+        default: false
 
       core_build:
         description: "Core build — the essentials (SuSFS, NoMount, Re-Kernel Netlink, Re-Kernel eBPF); BBG and DroidSpaces stay off"
@@ -86,49 +83,7 @@ on:
         default: ""
 
       nomount_commit:
-        description: "Custom NoMount commit or tag. Default: pinned commit 0c4b2dbd113b267b673cd7925cd80736658d7a62. Leave empty to use the latest commit on master."
-        required: false
-        type: string
-        default: "0c4b2dbd113b267b673cd7925cd80736658d7a62"
-
-      feature_bbr_default:
-        description: "Set BBR as the default TCP congestion control (BBR is already compiled into Melt - this only switches the default from Westwood)"
-        required: true
-        type: boolean
-        default: true
-
-      feature_ksm:
-        description: "Enable KSM (Kernel Samepage Merging)"
-        required: true
-        type: boolean
-        default: true
-
-      feature_zswap_lz4:
-        description: "Enable zswap with the LZ4 compressor (default-on at boot)"
-        required: true
-        type: boolean
-        default: true
-
-      feature_mglru:
-        description: "Enable MGLRU (Multi-Gen LRU). Auto-detects support; applies a backport patch only if the tree lacks it AND a patch URL is provided."
-        required: true
-        type: boolean
-        default: true
-
-      mglru_patch_url:
-        description: "Optional: direct URL to an MGLRU (lru_gen) backport patch for kernel 5.10. Only used if the kernel tree lacks MGLRU. Leave empty to skip."
-        required: false
-        type: string
-        default: ""
-
-      feature_fuse_passthrough:
-        description: "Enable FUSE passthrough. Auto-detects support; applies a backport patch only if the tree lacks it AND a patch URL is provided."
-        required: true
-        type: boolean
-        default: true
-
-      fuse_passthrough_patch_url:
-        description: "Optional: direct URL to a FUSE passthrough backport patch for kernel 5.10. Only used if the kernel tree lacks support. Leave empty to skip."
+        description: "Custom NoMount commit or tag. Leave empty to use the latest commit on master."
         required: false
         type: string
         default: ""
@@ -364,140 +319,6 @@ jobs:
           echo "==> Detected kernel base version: ${KERNEL_BASE_VERSION}"
           cd ..
 
-      - name: Enable extra kernel features (auto-detect)
-        run: |
-          set -e
-          cd ${SOC}
-          DEFCONFIG=arch/arm64/configs/marble_defconfig
-          EXTRAS=""
-
-          note() { EXTRAS="${EXTRAS:+$EXTRAS, }$1"; }
-
-          # --- BBR: already compiled into Melt, default is Westwood ---
-          if [[ "${{ inputs.feature_bbr_default }}" == true ]]; then
-            if grep -q '^CONFIG_DEFAULT_BBR=y' "$DEFCONFIG"; then
-              echo "==> BBR: already the default TCP congestion control."
-            elif grep -q '^CONFIG_TCP_CONG_BBR=y' "$DEFCONFIG"; then
-              sed -i -E '/^CONFIG_DEFAULT_(WESTWOOD|CUBIC|BIC|HTCP|HYBLA|VENO|VEGAS|NV|SCALABLE|LP|YEAH|ILLINOIS|DCTCP|CDG)=/d' "$DEFCONFIG"
-              echo "CONFIG_DEFAULT_BBR=y" >> "$DEFCONFIG"
-              echo "==> BBR: switched default TCP congestion control to BBR."
-              note "BBR-default"
-            else
-              echo "::warning::BBR is not compiled into this tree - skipping default switch."
-            fi
-          fi
-
-          # --- KSM: mainline, present in the tree but not enabled ---
-          if [[ "${{ inputs.feature_ksm }}" == true ]]; then
-            if grep -q '^config KSM' mm/Kconfig; then
-              if grep -q '^CONFIG_KSM=y' "$DEFCONFIG"; then
-                echo "==> KSM: already enabled."
-              else
-                echo "CONFIG_KSM=y" >> "$DEFCONFIG"
-                echo "==> KSM: enabled."
-                note "KSM"
-              fi
-            else
-              echo "::warning::KSM is not available in this tree - skipping."
-            fi
-          fi
-
-          # --- zswap + LZ4: mainline, present in the tree but not enabled ---
-          if [[ "${{ inputs.feature_zswap_lz4 }}" == true ]]; then
-            if grep -q '^config ZSWAP' mm/Kconfig; then
-              ADDED=0
-              for CFG in CONFIG_FRONTSWAP CONFIG_ZSWAP CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4 CONFIG_ZSWAP_ZPOOL_DEFAULT_ZSMALLOC CONFIG_ZSWAP_DEFAULT_ON; do
-                if ! grep -q "^${CFG}=" "$DEFCONFIG"; then
-                  echo "${CFG}=y" >> "$DEFCONFIG"
-                  ADDED=1
-                fi
-              done
-              if [[ "$ADDED" == 1 ]]; then
-                echo "==> zswap: enabled with LZ4 compressor (active at boot)."
-                note "zswap+lz4"
-              else
-                echo "==> zswap: already fully enabled."
-              fi
-            else
-              echo "::warning::zswap is not available in this tree - skipping."
-            fi
-          fi
-
-          # --- MGLRU: auto-detect; backport only via an explicitly provided patch URL ---
-          if [[ "${{ inputs.feature_mglru }}" == true ]]; then
-            if grep -rq 'config LRU_GEN' mm/ 2>/dev/null; then
-              ADDED=0
-              for CFG in CONFIG_LRU_GEN CONFIG_LRU_GEN_ENABLED; do
-                if ! grep -q "^${CFG}=y" "$DEFCONFIG"; then
-                  echo "${CFG}=y" >> "$DEFCONFIG"
-                  ADDED=1
-                fi
-              done
-              if [[ "$ADDED" == 1 ]]; then
-                echo "==> MGLRU: enabled."
-                note "MGLRU"
-              else
-                echo "==> MGLRU: already enabled in this tree."
-              fi
-            elif [[ -n "${{ inputs.mglru_patch_url }}" ]]; then
-              echo "==> MGLRU: not present in this tree - applying backport patch from ${{ inputs.mglru_patch_url }}"
-              if curl -fsSL "${{ inputs.mglru_patch_url }}" -o mglru.patch; then
-                if patch -p1 --dry-run --silent < mglru.patch > /dev/null 2>&1; then
-                  patch -p1 --silent < mglru.patch
-                  echo "CONFIG_LRU_GEN=y" >> "$DEFCONFIG"
-                  echo "CONFIG_LRU_GEN_ENABLED=y" >> "$DEFCONFIG"
-                  echo "==> MGLRU: backport applied and enabled."
-                  note "MGLRU(backport)"
-                else
-                  echo "::warning::MGLRU patch does not apply cleanly to this tree - skipping (build continues without MGLRU)."
-                fi
-              else
-                echo "::warning::Could not download MGLRU patch - skipping."
-              fi
-            else
-              echo "::warning::MGLRU is NOT present in this kernel tree (the CONFIG_LRU_GEN lines in marble_defconfig are inert) and no patch URL was provided - skipping."
-            fi
-          fi
-
-          # --- FUSE passthrough: auto-detect; backport only via an explicitly provided patch URL ---
-          if [[ "${{ inputs.feature_fuse_passthrough }}" == true ]]; then
-            if grep -q 'config FUSE_PASSTHROUGH' fs/fuse/Kconfig; then
-              if ! grep -q '^CONFIG_FUSE_PASSTHROUGH=y' "$DEFCONFIG"; then
-                echo "CONFIG_FUSE_PASSTHROUGH=y" >> "$DEFCONFIG"
-                echo "==> FUSE passthrough: supported by this tree, enabled."
-                note "FUSE-passthrough"
-              else
-                echo "==> FUSE passthrough: already enabled."
-              fi
-            elif [[ -n "${{ inputs.fuse_passthrough_patch_url }}" ]]; then
-              echo "==> FUSE passthrough: not supported by this tree - applying backport patch from ${{ inputs.fuse_passthrough_patch_url }}"
-              if curl -fsSL "${{ inputs.fuse_passthrough_patch_url }}" -o fuse-pt.patch; then
-                if patch -p1 --dry-run --silent < fuse-pt.patch > /dev/null 2>&1; then
-                  patch -p1 --silent < fuse-pt.patch
-                  echo "CONFIG_FUSE_PASSTHROUGH=y" >> "$DEFCONFIG"
-                  echo "==> FUSE passthrough: backport applied and enabled."
-                  note "FUSE-passthrough(backport)"
-                else
-                  echo "::warning::FUSE passthrough patch does not apply cleanly to this tree - skipping."
-                fi
-              else
-                echo "::warning::Could not download FUSE passthrough patch - skipping."
-              fi
-            else
-              echo "::warning::FUSE passthrough is not supported by this kernel tree and no patch URL was provided - skipping."
-            fi
-          fi
-
-          # --- io_uring: mainline since 5.1, just confirm ---
-          if grep -q '^config IO_URING' init/Kconfig; then
-            echo "==> io_uring: already supported by this tree (CONFIG_IO_URING, default y) - nothing to add."
-          else
-            echo "::warning::io_uring not found in this tree - nothing to enable."
-          fi
-
-          echo "KERNEL_EXTRAS=${EXTRAS:-none}" >> $GITHUB_ENV
-          echo "==> Kernel extras for this run: ${EXTRAS:-none}"
-
       - name: Use resolved LLVM/Clang release
         run: |
           echo "LLVM_TAG=${{ needs.Resolve_Toolchain.outputs.llvm_tag }}" >> "$GITHUB_ENV"
@@ -647,13 +468,7 @@ jobs:
                 curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
               fi
                 echo "==> ReSukiSU: pulling submodules"
-                KSU_DIRS_AFTER_SUB=$(ls -d */ 2>/dev/null | sort || true)
-                KSU_SUBMODULE_DIR=$(comm -13 <(echo "$KSU_DIRS_BEFORE") <(echo "$KSU_DIRS_AFTER_SUB") | head -n1 | sed 's:/$::')
-                if [[ -n "$KSU_SUBMODULE_DIR" && -f "${KSU_SUBMODULE_DIR}/kernel/setup.sh" ]]; then
-                  env -u CI -u GITHUB_ACTIONS bash "${KSU_SUBMODULE_DIR}/kernel/setup.sh" --submodule
-                else
-                  echo "::warning::Could not detect the ReSukiSU source dir for the submodule pull; continuing without it."
-                fi
+                env -u CI -u GITHUB_ACTIONS bash ./KernelSU/kernel/setup.sh --submodule
               ;;
 
             "SukiSUUltra")
@@ -979,14 +794,13 @@ jobs:
             --arg kernel_commit_url "${KERNEL_COMMIT_URL}" \
             --arg kernel_base_version "${KERNEL_BASE_VERSION:-unknown}" \
             --arg clang_version "${CLANG_VERSION}" \
-            --arg kernel_extras "${KERNEL_EXTRAS:-none}" \
             --arg susfs_commit "${SUSFS_COMMIT:-}" \
             --arg susfs_commit_url "${SUSFS_COMMIT_URL:-}" \
             --arg susfs_version_tag "${SUSFS_VERSION_TAG:-}" \
             --arg nomount_commit "${NOMOUNT_COMMIT:-}" \
             --arg nomount_commit_url "${NOMOUNT_COMMIT_URL:-}" \
             --arg nomount_version_tag "${NOMOUNT_VERSION_TAG:-}" \
-            '{ksu_type:$ksu_type,build_mode:$build_mode,kernel_name:$kernel_name,zip_name:$zip_name,ksu_manager_version:$ksu_manager_version,ksu_manager_commit:$ksu_manager_commit,ksu_manager_commit_url:$ksu_manager_commit_url,kernel_commit:$kernel_commit,kernel_commit_url:$kernel_commit_url,kernel_base_version:$kernel_base_version,clang_version:$clang_version,susfs_commit:$susfs_commit,susfs_commit_url:$susfs_commit_url,susfs_version_tag:$susfs_version_tag,nomount_commit:$nomount_commit,nomount_commit_url:$nomount_commit_url,nomount_version_tag:$nomount_version_tag,kernel_extras:$kernel_extras}' \
+            '{ksu_type:$ksu_type,build_mode:$build_mode,kernel_name:$kernel_name,zip_name:$zip_name,ksu_manager_version:$ksu_manager_version,ksu_manager_commit:$ksu_manager_commit,ksu_manager_commit_url:$ksu_manager_commit_url,kernel_commit:$kernel_commit,kernel_commit_url:$kernel_commit_url,kernel_base_version:$kernel_base_version,clang_version:$clang_version,susfs_commit:$susfs_commit,susfs_commit_url:$susfs_commit_url,susfs_version_tag:$susfs_version_tag,nomount_commit:$nomount_commit,nomount_commit_url:$nomount_commit_url,nomount_version_tag:$nomount_version_tag}' \
             > "${GITHUB_WORKSPACE}/metadata.json"
 
       - name: Upload build artifact
@@ -1033,7 +847,6 @@ jobs:
           EBPF_DONE=false
           FIRST=true
           FOUND_ANY=false
-          KERNEL_EXTRAS_LIST="none"
 
           declare -A ROW_VERSION
           declare -A ROW_MODES
@@ -1063,7 +876,6 @@ jobs:
               NOMOUNT_COMMIT_URL=$(jq -r '.nomount_commit_url' "$META")
               NOMOUNT_VERSION_TAG=$(jq -r '.nomount_version_tag' "$META")
               FIRST=false
-              KERNEL_EXTRAS_LIST=$(jq -r '.kernel_extras // "none"' "$META")
             fi
 
             ASSETS+=("${dir}${ZIP_NAME}")
@@ -1160,7 +972,6 @@ jobs:
            | ⚙️ Re-Kernel (Netlink) | ${rekernel_netlink_checkbox}
            | ⚙️ Re-Kernel (eBPF) | ${rekernel_ebpf_checkbox}
            | 🗂️ NoMount | ${nomount_checkbox}
-           | 🧪 Kernel Extras | ${KERNEL_EXTRAS_LIST} |
            | 🧩 eBPF | Enabled (BTF/CO-RE, kprobe+uprobe, cgroup+tc hooks) |
            | 🔨 Compiler | ${CLANG_VERSION} |
 
@@ -1184,7 +995,6 @@ jobs:
 
            ---
           " "${ASSETS[@]}"
-
 
 
 
