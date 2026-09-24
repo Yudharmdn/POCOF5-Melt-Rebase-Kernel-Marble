@@ -589,6 +589,7 @@ jobs:
             # Overwrite with pre-fixed fs/stat.c and fs/statfs.c (externs
             # moved above the helper) until upstream fixes it.
             # Ref: https://github.com/kaminarich/GKI-Kernel/commit/67a32d6e21fbd927913e957592f3c2960f7247a6
+            cat fs/statfs.c fs/stat.c
             cp "${GITHUB_WORKSPACE}/kernel_fixes/fs/stat.c" fs/stat.c
             cp "${GITHUB_WORKSPACE}/kernel_fixes/fs/statfs.c" fs/statfs.c
 
