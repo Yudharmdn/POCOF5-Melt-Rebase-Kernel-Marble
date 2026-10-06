@@ -52,6 +52,7 @@ on:
         default: Melt-Rebase
         options:
           - Melt-Rebase
+          - Bouquet-Rebase
           
       full_build:
         description: "Full build — enable ALL features (SuSFS, NoMount, BBG, Re-Kernel Netlink, Re-Kernel eBPF, DroidSpaces)"
