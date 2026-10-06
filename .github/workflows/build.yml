@@ -19,6 +19,7 @@ on:
         options:
           - melt-rebase
           - Yudharn-melt-rebase
+          - bouquet_ci
 
       manager_official_kernelsu:
         description: "Build Official-KernelSU"
