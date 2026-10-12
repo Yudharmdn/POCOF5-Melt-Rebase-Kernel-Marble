@@ -33,6 +33,12 @@ on:
         type: boolean
         default: false
 
+      manager_kernelsu_next_lkm:
+        description: "Build KernelSU-Next + SuSFS LKM (no built-in SuSFS; SuSFS-LKM_*.zip attached to release)"
+        required: true
+        type: boolean
+        default: false
+
       manager_bakasu:
         description: "Build BakaSU"
         required: true
@@ -101,6 +107,7 @@ jobs:
           MANAGERS=()
           [[ "${{ inputs.manager_official_kernelsu }}" == true ]] && MANAGERS+=("Official-KernelSU")
           [[ "${{ inputs.manager_kernelsu_next }}" == true ]] && MANAGERS+=("KernelSU-Next")
+          [[ "${{ inputs.manager_kernelsu_next_lkm }}" == true ]] && MANAGERS+=("KernelSU-Next-LKM")
           [[ "${{ inputs.manager_bakasu }}" == true ]] && MANAGERS+=("BakaSU")
           [[ "${{ inputs.manager_sukisu_ultra }}" == true ]] && MANAGERS+=("SukiSUUltra")
 
@@ -250,6 +257,8 @@ jobs:
             REKERNEL_EBPF=true
             DROIDSPACES=false
           fi
+          # SuSFS LKM must never stack with built-in SuSFS
+          [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]] && SUSFS=false
           echo "SUSFS=${SUSFS}" >> $GITHUB_ENV
           echo "NOMOUNT=${NOMOUNT}" >> $GITHUB_ENV
           echo "BBG=${BBG}" >> $GITHUB_ENV
@@ -436,7 +445,7 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
               ;;
 
-            "KernelSU-Next")
+            "KernelSU-Next"|"KernelSU-Next-LKM")
               if [[ "${{ env.SUSFS }}" == true ]]; then
                 curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
               else
@@ -474,7 +483,7 @@ jobs:
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --always 2>/dev/null || echo "")
                   [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((30000 + KSU_REV_COUNT))
                   ;;
-                "KernelSU-Next")
+                "KernelSU-Next"|"KernelSU-Next-LKM")
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --abbrev=0 2>/dev/null || echo "")
                   [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((30000 + KSU_REV_COUNT))
                   ;;
@@ -639,6 +648,12 @@ jobs:
 
           echo "-${KERNEL_NAME}-${{ github.actor }}" > .scmversion
 
+          # susfs-lkm-module picks the .ko from osrelease (needs "5.10.*-android12-*")
+          if [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]] && ! grep -q '^CONFIG_LOCALVERSION=".*-android12-' arch/arm64/configs/marble_defconfig; then
+            echo "-android12-9-${KERNEL_NAME}-${{ github.actor }}" > .scmversion
+            echo "==> SuSFS LKM: osrelease tagged with -android12-9 for KMI detection"
+          fi
+
           echo "CONFIG_TMPFS_XATTR=y" >> arch/arm64/configs/marble_defconfig
 
           echo "CONFIG_BPF_SYSCALL=y" >> arch/arm64/configs/marble_defconfig
@@ -711,6 +726,8 @@ jobs:
 
           if [[ "${{ env.SUSFS }}" == true ]]; then
             ZIP_NAME="${ZIP_NAME}-SuSFS"
+          elif [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]]; then
+            ZIP_NAME="${ZIP_NAME}-SuSFS-LKM"
           fi
 
           if [[ "${{ env.NOMOUNT }}" == true ]]; then
@@ -767,9 +784,41 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+  Build_SuSFS_LKM:
+    needs: Determine_Matrix
+    if: ${{ inputs.manager_kernelsu_next_lkm }}
+    name: Build SuSFS LKM module ZIP
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Build susfs-lkm-module
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/matsuzaka-yuki/susfs-lkm-module.git lkm
+          cd lkm
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+          if [[ -z "$ANDROID_NDK_HOME" || ! -d "$ANDROID_NDK_HOME" ]]; then
+            wget -q https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+            unzip -q android-ndk-r27d-linux.zip -d "$HOME"
+            export ANDROID_NDK_HOME="$HOME/android-ndk-r27d"
+          fi
+          python3 tools/build.py
+          WRAP_COMMIT=$(git rev-parse --short HEAD)
+          LKM_TAG=$(sed -n 's/^TAG = "\(.*\)"$/\1/p' tools/build.py)
+          OUT="SuSFS-LKM_${LKM_TAG}_${WRAP_COMMIT}.zip"
+          cp dist/*.zip "${GITHUB_WORKSPACE}/${OUT}"
+          echo "==> Built ${OUT}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-susfs-lkm
+          path: SuSFS-LKM_*.zip
+          retention-days: 1
+
   Create_Release:
     name: Create combined GitHub Release
-    needs: Build_Kernel_Marble
+    needs: [Build_Kernel_Marble, Build_SuSFS_LKM]
 
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -821,13 +870,16 @@ jobs:
               KERNEL_COMMIT_URL=$(jq -r '.kernel_commit_url' "$META")
               KERNEL_BASE_VERSION=$(jq -r '.kernel_base_version' "$META")
               CLANG_VERSION=$(jq -r '.clang_version' "$META")
-              SUSFS_COMMIT=$(jq -r '.susfs_commit' "$META")
-              SUSFS_COMMIT_URL=$(jq -r '.susfs_commit_url' "$META")
-              SUSFS_VERSION_TAG=$(jq -r '.susfs_version_tag' "$META")
               NOMOUNT_COMMIT=$(jq -r '.nomount_commit' "$META")
               NOMOUNT_COMMIT_URL=$(jq -r '.nomount_commit_url' "$META")
               NOMOUNT_VERSION_TAG=$(jq -r '.nomount_version_tag' "$META")
               FIRST=false
+            fi
+
+            if [[ -z "${SUSFS_COMMIT:-}" && -n "$(jq -r '.susfs_commit' "$META")" ]]; then
+              SUSFS_COMMIT=$(jq -r '.susfs_commit' "$META")
+              SUSFS_COMMIT_URL=$(jq -r '.susfs_commit_url' "$META")
+              SUSFS_VERSION_TAG=$(jq -r '.susfs_version_tag' "$META")
             fi
 
             ASSETS+=("${dir}${ZIP_NAME}")
@@ -870,6 +922,14 @@ jobs:
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
             echo "::error::No successful builds found in any matrix leg — skipping release creation."
             exit 1
+          fi
+
+          SUSFS_LKM_ZIP=$(find . -type f -name 'SuSFS-LKM_*.zip' | head -n1)
+          if [[ -n "$SUSFS_LKM_ZIP" ]]; then
+            ASSETS+=("$SUSFS_LKM_ZIP")
+            susfs_lkm_checkbox="Supported ($(basename "$SUSFS_LKM_ZIP"), for KernelSU-Next-LKM zip only)"
+          else
+            susfs_lkm_checkbox="Not built"
           fi
 
           MODES_SELECTED=()
@@ -918,7 +978,8 @@ jobs:
            | 🧬 Build Modes in this run | ${MODES_LABEL} |
            | 📦 Source | ${{ inputs.kernel_source }} |
            | 🔗 Kernel branch | ${{ inputs.kernel_branch }}@[${KERNEL_COMMIT}](${KERNEL_COMMIT_URL})
-           | ⚙️ SuSFS Version | ${susfs_checkbox} 
+           | ⚙️ SuSFS Version | ${susfs_checkbox}
+           | 🧩 SuSFS LKM | ${susfs_lkm_checkbox} |
            | 🛡️ Baseband Guard | Supported (Full Only) |
            | 🖥️ Droidspaces | Supported (Full Only) |
            | ⚙️ Re-Kernel (Netlink) | ${rekernel_netlink_checkbox}
@@ -938,6 +999,8 @@ jobs:
            | **FULL** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
            | **CORE** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
 
+           > **KernelSU-Next-LKM**: SuSFS is NOT built in. Flash the kernel zip, then install \`SuSFS-LKM_*.zip\` as a KernelSU module and reboot. Never combine it with a built-in SuSFS kernel.
+
            ---
 
            ### 💻 KSU Managers in this build
@@ -947,6 +1010,7 @@ jobs:
 
            ---
           " "${ASSETS[@]}"
+
 
 
 
