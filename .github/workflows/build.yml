@@ -19,7 +19,6 @@ on:
         options:
           - melt-rebase
           - Yudharn-melt-rebase
-          - bouquet_ci
 
       manager_official_kernelsu:
         description: "Build Official-KernelSU"
@@ -867,8 +866,6 @@ jobs:
           path: |
             ${{ env.ZIP_NAME }}
             metadata.json
-            rekernel.bpf.o
-            rekerneld_aarch64
             *_Manager_*.apk
           if-no-files-found: ignore
           retention-days: 1
@@ -956,7 +953,6 @@ jobs:
 
           ASSETS=()
           NOTES_ROWS=""
-          EBPF_DONE=false
           FIRST=true
           FOUND_ANY=false
 
@@ -1015,11 +1011,6 @@ jobs:
             else
               ROW_MODES["$KSU_TYPE"]="${ROW_MODES[$KSU_TYPE]},${BUILD_MODE_LEG}"
             fi
-
-            if [[ "$EBPF_DONE" == false && -f "${dir}rekernel.bpf.o" ]]; then
-              ASSETS+=("${dir}rekernel.bpf.o" "${dir}rekerneld_aarch64")
-              EBPF_DONE=true
-            fi
           done < <(find . -type f -name 'metadata.json' | sort)
 
           if [[ "$FOUND_ANY" == false ]]; then
@@ -1069,7 +1060,7 @@ jobs:
           fi
 
           rekernel_netlink_checkbox="Supported"
-          rekernel_ebpf_checkbox="Supported (daemon+prog attached as release assets)"
+          rekernel_ebpf_checkbox="Supported"
 
           if [[ -n "$NOMOUNT_COMMIT" ]]; then
             if [[ -n "$NOMOUNT_VERSION_TAG" && "$NOMOUNT_VERSION_TAG" != "unknown" && "$NOMOUNT_VERSION_TAG" != "null" ]]; then
