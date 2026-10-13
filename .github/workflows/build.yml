@@ -78,6 +78,12 @@ on:
         type: string
         default: ""
 
+      susfs_lkm_tag:
+        description: "SuSFS LKM release tag (inforcqb/susfs4ksu-lkm). Leave empty to use the latest release."
+        required: false
+        type: string
+        default: ""
+
       nomount_commit:
         description: "Custom NoMount commit or tag. Leave empty to use the latest commit on master."
         required: false
@@ -800,28 +806,50 @@ jobs:
   Build_SuSFS_LKM:
     needs: Determine_Matrix
     if: ${{ inputs.manager_kernelsu_next_lkm }}
-    name: Build SuSFS LKM module ZIP
+    name: Fetch SuSFS LKM module ZIP
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LKM_REPO: inforcqb/susfs4ksu-lkm
     steps:
-      - name: Build susfs-lkm-module
+      - name: Get official susfs_guard_lkm module ZIP (fallback - matsuzaka-yuki wrapper)
         run: |
           set -euo pipefail
-          git clone --depth=1 https://github.com/matsuzaka-yuki/susfs-lkm-module.git lkm
-          cd lkm
-          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
-          if [[ -z "$ANDROID_NDK_HOME" || ! -d "$ANDROID_NDK_HOME" ]]; then
-            wget -q https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
-            unzip -q android-ndk-r27d-linux.zip -d "$HOME"
-            export ANDROID_NDK_HOME="$HOME/android-ndk-r27d"
+          if [[ -n "${{ inputs.susfs_lkm_tag }}" ]]; then
+            REL_JSON=$(gh api "repos/${LKM_REPO}/releases/tags/${{ inputs.susfs_lkm_tag }}")
+          else
+            REL_JSON=$(gh api "repos/${LKM_REPO}/releases/latest")
           fi
-          python3 tools/build.py
-          WRAP_COMMIT=$(git rev-parse --short HEAD)
-          LKM_TAG=$(sed -n 's/^TAG = "\(.*\)"$/\1/p' tools/build.py)
-          OUT="SuSFS-LKM_${LKM_TAG}_${WRAP_COMMIT}.zip"
-          cp dist/*.zip "${GITHUB_WORKSPACE}/${OUT}"
+          TAG=$(jq -r '.tag_name' <<<"$REL_JSON")
+          ASSET=$(jq -r '.assets[].name | select(test("^susfs_guard_lkm-module-.*-arm64\\.zip$"))' <<<"$REL_JSON" | head -n1)
+          echo "==> ${LKM_REPO} release: ${TAG}"
+
+          if [[ -n "$ASSET" ]]; then
+            gh release download "$TAG" -R "$LKM_REPO" -p "$ASSET" -D lkm-dl
+            unzip -Z1 "lkm-dl/${ASSET}" > lkm-list.txt
+            grep -qx 'lib/susfs_guard_lkm-android12-5.10.ko' lkm-list.txt \
+              || { echo "::error::${ASSET} has no android12-5.10 .ko"; exit 1; }
+            OUT="SuSFS-LKM_${TAG}.zip"
+            cp "lkm-dl/${ASSET}" "$OUT"
+            echo "==> Using official upstream module ${ASSET}"
+          else
+            echo "::warning::${TAG} has no official module ZIP - falling back to matsuzaka-yuki/susfs-lkm-module (pinned upstream build)."
+            git clone --depth=1 https://github.com/matsuzaka-yuki/susfs-lkm-module.git lkm
+            export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+            if [[ -z "$ANDROID_NDK_HOME" || ! -d "$ANDROID_NDK_HOME" ]]; then
+              wget -q https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+              unzip -q android-ndk-r27d-linux.zip -d "$HOME"
+              export ANDROID_NDK_HOME="$HOME/android-ndk-r27d"
+            fi
+            (cd lkm && python3 tools/build.py)
+            WRAP_TAG=$(sed -n 's/^TAG = "\(.*\)"$/\1/p' lkm/tools/build.py)
+            OUT="SuSFS-LKM_${WRAP_TAG}_wrapper-$(git -C lkm rev-parse --short HEAD).zip"
+            cp lkm/dist/*.zip "$OUT"
+          fi
           echo "==> Built ${OUT}"
+          unzip -l "$OUT"
 
       - uses: actions/upload-artifact@v7
         with:
