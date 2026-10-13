@@ -648,10 +648,13 @@ jobs:
 
           echo "-${KERNEL_NAME}-${{ github.actor }}" > .scmversion
 
-          # susfs-lkm-module picks the .ko from osrelease (needs "5.10.*-android12-*")
+          # susfs-lkm-module picks the .ko from osrelease (needs "5.10.*-android12-*").
+          # CONFIG_LOCALVERSION_AUTO is off on this tree, so .scmversion is ignored -> patch CONFIG_LOCALVERSION.
           if [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]] && ! grep -q '^CONFIG_LOCALVERSION=".*-android12-' arch/arm64/configs/marble_defconfig; then
-            echo "-android12-9-${KERNEL_NAME}-${{ github.actor }}" > .scmversion
-            echo "==> SuSFS LKM: osrelease tagged with -android12-9 for KMI detection"
+            sed -i 's/^CONFIG_LOCALVERSION="\(.*\)"$/CONFIG_LOCALVERSION="-android12-9\1"/' arch/arm64/configs/marble_defconfig
+            grep -q '^CONFIG_LOCALVERSION="-android12-9' arch/arm64/configs/marble_defconfig \
+              || echo 'CONFIG_LOCALVERSION="-android12-9"' >> arch/arm64/configs/marble_defconfig
+            echo "==> SuSFS LKM: $(grep '^CONFIG_LOCALVERSION=' arch/arm64/configs/marble_defconfig)"
           fi
 
           echo "CONFIG_TMPFS_XATTR=y" >> arch/arm64/configs/marble_defconfig
@@ -677,6 +680,16 @@ jobs:
 
           echo "ccache status after build:"
           ccache -s
+
+      - name: Verify kernel release (SuSFS LKM KMI)
+        if: ${{ matrix.ksu_type == 'KernelSU-Next-LKM' }}
+        run: |
+          KREL=$(cat ${SOC}/out/include/config/kernel.release)
+          echo "==> kernel.release: ${KREL}"
+          case "$KREL" in
+            5.10.*-android12-*) echo "==> OK: susfs-lkm-module will select android12-5.10" ;;
+            *) echo "::error::kernel.release '${KREL}' does not match 5.10.*-android12-* - SuSFS LKM would refuse to load"; exit 1 ;;
+          esac
 
       - name: Save ccache
         if: ${{ always() && steps.ccache-restore.outputs.cache-hit != 'true' }}
