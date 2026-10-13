@@ -45,12 +45,6 @@ on:
         type: boolean
         default: true
 
-      manager_sukisu_ultra:
-        description: "Build SukiSUUltra"
-        required: true
-        type: boolean
-        default: false
-
       custom_name:
         description: "kernel"
         required: false
@@ -90,6 +84,12 @@ on:
         type: string
         default: ""
 
+      include_manager_apk:
+        description: "Attach the matching manager APK (latest successful CI build of each manager) to the release"
+        required: true
+        type: boolean
+        default: true
+
       ccache_update:
         description: "Refresh ccache"
         required: true
@@ -115,7 +115,6 @@ jobs:
           [[ "${{ inputs.manager_kernelsu_next }}" == true ]] && MANAGERS+=("KernelSU-Next")
           [[ "${{ inputs.manager_kernelsu_next_lkm }}" == true ]] && MANAGERS+=("KernelSU-Next-LKM")
           [[ "${{ inputs.manager_bakasu }}" == true ]] && MANAGERS+=("BakaSU")
-          [[ "${{ inputs.manager_sukisu_ultra }}" == true ]] && MANAGERS+=("SukiSUUltra")
 
           if [[ ${#MANAGERS[@]} -eq 0 ]]; then
             echo "::error::No manager checked — tick at least one manager_* checkbox before running this workflow."
@@ -463,9 +462,6 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s main
               ;;
 
-            "SukiSUUltra")
-              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-              ;;              
           esac
 
           if [[ "${{ matrix.ksu_type }}" != "None" ]]; then
@@ -474,6 +470,8 @@ jobs:
 
             if [[ -n "$KSU_DIR" && -d "${KSU_DIR}/.git" ]]; then
               KSU_MANAGER_COMMIT=$(cd "$KSU_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "")
+              KSU_MANAGER_SHA=$(cd "$KSU_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+              echo "KSU_MANAGER_SHA=${KSU_MANAGER_SHA}" >> $GITHUB_ENV
               KSU_MANAGER_REPO_URL=$(cd "$KSU_DIR" && git remote get-url origin 2>/dev/null | sed 's/\.git$//')
               KSU_MANAGER_COMMIT_URL="${KSU_MANAGER_REPO_URL}/commit/${KSU_MANAGER_COMMIT}"
 
@@ -492,10 +490,6 @@ jobs:
                 "KernelSU-Next"|"KernelSU-Next-LKM")
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --abbrev=0 2>/dev/null || echo "")
                   [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((30000 + KSU_REV_COUNT))
-                  ;;
-                "SukiSUUltra")
-                  KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --abbrev=0 2>/dev/null || echo "")
-                  [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((40000 + KSU_REV_COUNT - 2815))
                   ;;
                 *)
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --always 2>/dev/null || echo "")
@@ -768,6 +762,77 @@ jobs:
 
           echo "ZIP_NAME=${ZIP_NAME}.zip" >> $GITHUB_ENV
 
+      - name: Fetch ${{ matrix.ksu_type }} manager APK (CI)
+        if: ${{ inputs.include_manager_apk }}
+        continue-on-error: true
+        env:
+          PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -uo pipefail
+          KSU_TYPE="${{ matrix.ksu_type }}"
+          # "<repo> <branch> <workflow file> <artifact name regex>", tried in order
+          case "$KSU_TYPE" in
+            "Official-KernelSU") CANDS=("tiann/KernelSU main build-manager.yml ^manager$") ;;
+            "KernelSU-Next"|"KernelSU-Next-LKM")
+              CANDS=()
+              [[ "${SUSFS}" == true ]] && CANDS+=("pershoot/KernelSU-Next dev-susfs build-manager-ci.yml ^manager$")
+              CANDS+=("KernelSU-Next/KernelSU-Next dev build-manager-ci.yml ^manager$") ;;
+            "BakaSU") CANDS=("Baka-SU/BakaSU main build-manager.yml ^Manager-release$") ;;
+            *) echo "==> No manager CI known for ${KSU_TYPE}"; exit 0 ;;
+          esac
+
+          # github.token first, RELEASE_PAT as fallback (cross-repo artifact access)
+          api() { gh api "$@" 2>/dev/null || { [[ -n "${PAT}" ]] && GH_TOKEN="${PAT}" gh api "$@"; }; }
+          api_dl() { gh api "$1" > "$2" 2>/dev/null || { [[ -n "${PAT}" ]] && GH_TOKEN="${PAT}" gh api "$1" > "$2"; }; }
+
+          for c in "${CANDS[@]}"; do
+            read -r REPO BRANCH WF ART_RE <<<"$c"
+            RUN_JSON=""
+            MATCH=latest
+            if [[ -n "${KSU_MANAGER_SHA:-}" ]]; then
+              RUN_JSON=$(api "repos/${REPO}/actions/workflows/${WF}/runs?branch=${BRANCH}&status=success&head_sha=${KSU_MANAGER_SHA}&per_page=1" --jq '.workflow_runs[0] // empty')
+              [[ -n "$RUN_JSON" ]] && MATCH=exact
+            fi
+            if [[ -z "$RUN_JSON" ]]; then
+              RUN_JSON=$(api "repos/${REPO}/actions/workflows/${WF}/runs?branch=${BRANCH}&event=push&status=success&per_page=1" --jq '.workflow_runs[0] // empty')
+            fi
+            if [[ -z "$RUN_JSON" ]]; then
+              echo "==> ${REPO}@${BRANCH}: no successful ${WF} run"
+              continue
+            fi
+            RUN_ID=$(jq -r '.id' <<<"$RUN_JSON")
+            RUN_SHA=$(jq -r '.head_sha[0:8]' <<<"$RUN_JSON")
+            RUN_URL=$(jq -r '.html_url' <<<"$RUN_JSON")
+
+            ART_ID=$(api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.expired | not) | select(.name | test(\"${ART_RE}\"))][0].id // empty")
+            if [[ -z "$ART_ID" ]]; then
+              echo "==> ${RUN_URL}: no unexpired artifact matching ${ART_RE}"
+              continue
+            fi
+
+            rm -rf mgr-dl && mkdir -p mgr-dl
+            if ! api_dl "repos/${REPO}/actions/artifacts/${ART_ID}/zip" mgr-dl/artifact.zip; then
+              echo "::warning::Artifact download from ${RUN_URL} failed (token cannot read cross-repo artifacts? set RELEASE_PAT)."
+              continue
+            fi
+            unzip -q -o mgr-dl/artifact.zip -d mgr-dl
+            APK=$(find mgr-dl -name '*.apk' ! -iname '*spoof*' ! -iname '*debug*' | sort | head -n1)
+            [[ -z "$APK" ]] && { echo "==> no APK inside artifact ${ART_ID}"; continue; }
+
+            OUT="${KSU_TYPE}_Manager_$(basename "$APK")"
+            cp "$APK" "$OUT"
+            {
+              echo "MANAGER_APK=${OUT}"
+              echo "MANAGER_APK_URL=${RUN_URL}"
+              echo "MANAGER_APK_MATCH=${MATCH}"
+              echo "MANAGER_APK_SHA=${RUN_SHA}"
+            } >> "$GITHUB_ENV"
+            echo "==> ${OUT} <- ${REPO}@${RUN_SHA} (${MATCH} match to kernel ${KSU_MANAGER_COMMIT:-?}) ${RUN_URL}"
+            exit 0
+          done
+          echo "::warning::Could not fetch a ${KSU_TYPE} manager APK - this release will not include it."
+
       - name: Write build metadata
         run: |
           jq -n \
@@ -788,7 +853,11 @@ jobs:
             --arg nomount_commit "${NOMOUNT_COMMIT:-}" \
             --arg nomount_commit_url "${NOMOUNT_COMMIT_URL:-}" \
             --arg nomount_version_tag "${NOMOUNT_VERSION_TAG:-}" \
-            '{ksu_type:$ksu_type,build_mode:$build_mode,kernel_name:$kernel_name,zip_name:$zip_name,ksu_manager_version:$ksu_manager_version,ksu_manager_commit:$ksu_manager_commit,ksu_manager_commit_url:$ksu_manager_commit_url,kernel_commit:$kernel_commit,kernel_commit_url:$kernel_commit_url,kernel_base_version:$kernel_base_version,clang_version:$clang_version,susfs_commit:$susfs_commit,susfs_commit_url:$susfs_commit_url,susfs_version_tag:$susfs_version_tag,nomount_commit:$nomount_commit,nomount_commit_url:$nomount_commit_url,nomount_version_tag:$nomount_version_tag}' \
+            --arg manager_apk "${MANAGER_APK:-}" \
+            --arg manager_apk_url "${MANAGER_APK_URL:-}" \
+            --arg manager_apk_match "${MANAGER_APK_MATCH:-}" \
+            --arg manager_apk_sha "${MANAGER_APK_SHA:-}" \
+            '{manager_apk:$manager_apk,manager_apk_url:$manager_apk_url,manager_apk_match:$manager_apk_match,manager_apk_sha:$manager_apk_sha,ksu_type:$ksu_type,build_mode:$build_mode,kernel_name:$kernel_name,zip_name:$zip_name,ksu_manager_version:$ksu_manager_version,ksu_manager_commit:$ksu_manager_commit,ksu_manager_commit_url:$ksu_manager_commit_url,kernel_commit:$kernel_commit,kernel_commit_url:$kernel_commit_url,kernel_base_version:$kernel_base_version,clang_version:$clang_version,susfs_commit:$susfs_commit,susfs_commit_url:$susfs_commit_url,susfs_version_tag:$susfs_version_tag,nomount_commit:$nomount_commit,nomount_commit_url:$nomount_commit_url,nomount_version_tag:$nomount_version_tag}' \
             > "${GITHUB_WORKSPACE}/metadata.json"
 
       - name: Upload build artifact
@@ -800,6 +869,7 @@ jobs:
             metadata.json
             rekernel.bpf.o
             rekerneld_aarch64
+            *_Manager_*.apk
           if-no-files-found: ignore
           retention-days: 1
 
@@ -892,6 +962,7 @@ jobs:
 
           declare -A ROW_VERSION
           declare -A ROW_MODES
+          declare -A ROW_APK
           ORDERED_TYPES=()
 
           while IFS= read -r META; do
@@ -925,6 +996,12 @@ jobs:
 
             ASSETS+=("${dir}${ZIP_NAME}")
 
+            MANAGER_APK=$(jq -r '.manager_apk // ""' "$META")
+            if [[ -n "$MANAGER_APK" && -f "${dir}${MANAGER_APK}" && -z "${ROW_APK[$KSU_TYPE]+x}" ]]; then
+              ASSETS+=("${dir}${MANAGER_APK}")
+              ROW_APK["$KSU_TYPE"]="\`${MANAGER_APK}\` ([CI $(jq -r '.manager_apk_match' "$META")@$(jq -r '.manager_apk_sha' "$META")]($(jq -r '.manager_apk_url' "$META")))"
+            fi
+
             if [[ -n "$KSU_MANAGER_COMMIT" ]]; then
               ksu_row_version="${KSU_MANAGER_VERSION}@[${KSU_MANAGER_COMMIT}](${KSU_MANAGER_COMMIT_URL})"
             else
@@ -957,7 +1034,7 @@ jobs:
               MODE_LABEL="$MODES_RAW"
             fi
             NOTES_ROWS="${NOTES_ROWS}
-           | ${KSU_TYPE} | ${MODE_LABEL} | ${ROW_VERSION[$KSU_TYPE]} |"
+           | ${KSU_TYPE} | ${MODE_LABEL} | ${ROW_VERSION[$KSU_TYPE]} | ${ROW_APK[$KSU_TYPE]:-—} |"
           done
 
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
@@ -1046,8 +1123,8 @@ jobs:
 
            ### 💻 KSU Managers in this build
 
-           | Manager | Mode | Version |
-           |:---|:---:|:---|${NOTES_ROWS}
+           | Manager | Mode | Version | Manager APK |
+           |:---|:---:|:---|:---|${NOTES_ROWS}
 
            ---
           " "${ASSETS[@]}"
