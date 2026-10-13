@@ -739,7 +739,7 @@ jobs:
           if [[ "${{ env.SUSFS }}" == true ]]; then
             ZIP_NAME="${ZIP_NAME}-SuSFS"
           elif [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]]; then
-            ZIP_NAME="${ZIP_NAME}-SuSFS-LKM"
+            ZIP_NAME="${ZIP_NAME}-SuSFS"
           fi
 
           if [[ "${{ env.NOMOUNT }}" == true ]]; then
