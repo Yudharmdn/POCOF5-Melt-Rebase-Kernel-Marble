@@ -19,6 +19,7 @@ on:
         options:
           - melt-rebase
           - Yudharn-melt-rebase
+          - test-melt-rebase
 
       manager_official_kernelsu:
         description: "Build Official-KernelSU"
