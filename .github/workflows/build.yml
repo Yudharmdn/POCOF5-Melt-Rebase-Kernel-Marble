@@ -458,7 +458,7 @@ jobs:
               ;;
 
             "BakaSU")
-              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/dev/kernel/setup.sh" | bash -s dev
+              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/sync-susfs/kernel/setup.sh" | bash -s sync-susfs
               ;;
 
           esac
@@ -776,7 +776,7 @@ jobs:
               CANDS=()
               [[ "${SUSFS}" == true ]] && CANDS+=("pershoot/KernelSU-Next dev-susfs build-manager-ci.yml ^manager$")
               CANDS+=("KernelSU-Next/KernelSU-Next dev build-manager-ci.yml ^manager$") ;;
-            "BakaSU") CANDS=("Baka-SU/BakaSU dev build-manager.yml ^Manager-release$") ;;
+            "BakaSU") CANDS=("Baka-SU/BakaSU sync-susfs build-manager.yml ^Manager-release$") ;;
             *) echo "==> No manager CI known for ${KSU_TYPE}"; exit 0 ;;
           esac
 
@@ -1119,6 +1119,7 @@ jobs:
 
            ---
           " "${ASSETS[@]}"
+
 
 
 
