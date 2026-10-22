@@ -571,6 +571,18 @@ jobs:
               echo 'obj-$(CONFIG_KSU_SUSFS) += ksu_preinit_stub.o' >> fs/Makefile
             fi
 
+            # The patch's selinux_hide hooks call my_setprocattr/my_write_context/my_write_access, which only
+            # KernelSU-Next exports. BakaSU/Official don't, so route those hooks to the stock selinux functions.
+            if ! grep -rqE "^(ssize_t|int) (__nocfi )?my_(write_context|setprocattr)" "${KSU_DIR}/"; then
+              echo "==> ${{ matrix.ksu_type }} does not export my_* selinux_hide handlers - routing hooks to stock selinux code"
+              sed -i 's/return my_setprocattr(name, value, size);/return selinux_setprocattr(name, value, size);/' security/selinux/hooks.c
+              sed -i -e 's/return my_write_context(file, buf, size);/return sel_write_context(file, buf, size);/' \
+                     -e 's/return my_write_access(file, buf, size);/return sel_write_access(file, buf, size);/' security/selinux/selinuxfs.c
+              if grep -qE "return my_(setprocattr|write_context|write_access)\(" security/selinux/hooks.c security/selinux/selinuxfs.c; then
+                echo "::error::selinux_hide hook rewrite did not apply"; exit 1
+              fi
+            fi
+
             echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/marble_defconfig
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/marble_defconfig
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/marble_defconfig
