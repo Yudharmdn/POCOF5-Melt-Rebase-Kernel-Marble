@@ -100,7 +100,7 @@ on:
 jobs:
   Determine_Matrix:
     name: Determine which managers to build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
@@ -144,7 +144,7 @@ jobs:
   Resolve_Toolchain:
     needs: Determine_Matrix
     name: Resolve latest LLVM/Clang release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     env:
@@ -219,7 +219,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         SOC: marble
         CCACHE_KEY: ccache-ecsv3-marble-sm7475
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       actions: write
@@ -911,7 +911,7 @@ jobs:
     needs: Determine_Matrix
     if: ${{ inputs.manager_kernelsu_next_lkm }}
     name: Fetch SuSFS LKM module ZIP
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     env:
@@ -966,7 +966,7 @@ jobs:
     needs: [Build_Kernel_Marble, Build_SuSFS_LKM]
 
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
