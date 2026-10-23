@@ -33,12 +33,6 @@ on:
         type: boolean
         default: false
 
-      manager_kernelsu_next_lkm:
-        description: "Build KernelSU-Next + SuSFS LKM (no built-in SuSFS; SuSFS-LKM_*.zip attached to release)"
-        required: true
-        type: boolean
-        default: false
-
       manager_bakasu:
         description: "Build BakaSU"
         required: true
@@ -72,12 +66,6 @@ on:
         type: string
         default: ""
 
-      susfs_lkm_tag:
-        description: "SuSFS LKM release tag (inforcqb/susfs4ksu-lkm). Leave empty to use the latest release."
-        required: false
-        type: string
-        default: ""
-
       nomount_commit:
         description: "Custom NoMount commit or tag. Leave empty to use the latest commit on master."
         required: false
@@ -100,7 +88,7 @@ on:
 jobs:
   Determine_Matrix:
     name: Determine which managers to build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
@@ -113,7 +101,6 @@ jobs:
           MANAGERS=()
           [[ "${{ inputs.manager_official_kernelsu }}" == true ]] && MANAGERS+=("Official-KernelSU")
           [[ "${{ inputs.manager_kernelsu_next }}" == true ]] && MANAGERS+=("KernelSU-Next")
-          [[ "${{ inputs.manager_kernelsu_next_lkm }}" == true ]] && MANAGERS+=("KernelSU-Next-LKM")
           [[ "${{ inputs.manager_bakasu }}" == true ]] && MANAGERS+=("BakaSU")
 
           if [[ ${#MANAGERS[@]} -eq 0 ]]; then
@@ -144,7 +131,7 @@ jobs:
   Resolve_Toolchain:
     needs: Determine_Matrix
     name: Resolve latest LLVM/Clang release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     env:
@@ -219,7 +206,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         SOC: marble
         CCACHE_KEY: ccache-ecsv3-marble-sm7475
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       actions: write
@@ -262,8 +249,6 @@ jobs:
             REKERNEL_EBPF=true
             DROIDSPACES=false
           fi
-          # SuSFS LKM must never stack with built-in SuSFS
-          [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]] && SUSFS=false
           echo "SUSFS=${SUSFS}" >> $GITHUB_ENV
           echo "NOMOUNT=${NOMOUNT}" >> $GITHUB_ENV
           echo "BBG=${BBG}" >> $GITHUB_ENV
@@ -450,7 +435,7 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
               ;;
 
-            "KernelSU-Next"|"KernelSU-Next-LKM")
+            "KernelSU-Next")
               if [[ "${{ env.SUSFS }}" == true ]]; then
                 curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
               else
@@ -459,7 +444,7 @@ jobs:
               ;;
 
             "BakaSU")
-              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/sync-susfs/kernel/setup.sh" | bash -s sync-susfs
+              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s main
               ;;
 
           esac
@@ -487,7 +472,7 @@ jobs:
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --always 2>/dev/null || echo "")
                   [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((30000 + KSU_REV_COUNT))
                   ;;
-                "KernelSU-Next"|"KernelSU-Next-LKM")
+                "KernelSU-Next")
                   KSU_TAG=$(cd "$KSU_DIR" && git describe --tags --abbrev=0 2>/dev/null || echo "")
                   [[ -n "$KSU_REV_COUNT" ]] && KSU_CODE=$((30000 + KSU_REV_COUNT))
                   ;;
@@ -648,15 +633,6 @@ jobs:
 
           echo "-${KERNEL_NAME}-${{ github.actor }}" > .scmversion
 
-          # susfs-lkm-module picks the .ko from osrelease (needs "5.10.*-android12-*").
-          # CONFIG_LOCALVERSION_AUTO is off on this tree, so .scmversion is ignored -> patch CONFIG_LOCALVERSION.
-          if [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]] && ! grep -q '^CONFIG_LOCALVERSION=".*-android12-' arch/arm64/configs/marble_defconfig; then
-            sed -i 's/^CONFIG_LOCALVERSION="\(.*\)"$/CONFIG_LOCALVERSION="-android12-9\1"/' arch/arm64/configs/marble_defconfig
-            grep -q '^CONFIG_LOCALVERSION="-android12-9' arch/arm64/configs/marble_defconfig \
-              || echo 'CONFIG_LOCALVERSION="-android12-9"' >> arch/arm64/configs/marble_defconfig
-            echo "==> SuSFS LKM: $(grep '^CONFIG_LOCALVERSION=' arch/arm64/configs/marble_defconfig)"
-          fi
-
           echo "CONFIG_TMPFS_XATTR=y" >> arch/arm64/configs/marble_defconfig
 
           echo "CONFIG_BPF_SYSCALL=y" >> arch/arm64/configs/marble_defconfig
@@ -680,16 +656,6 @@ jobs:
 
           echo "ccache status after build:"
           ccache -s
-
-      - name: Verify kernel release (SuSFS LKM KMI)
-        if: ${{ matrix.ksu_type == 'KernelSU-Next-LKM' }}
-        run: |
-          KREL=$(cat ${SOC}/out/include/config/kernel.release)
-          echo "==> kernel.release: ${KREL}"
-          case "$KREL" in
-            5.10.*-android12-*) echo "==> OK: susfs-lkm-module will select android12-5.10" ;;
-            *) echo "::error::kernel.release '${KREL}' does not match 5.10.*-android12-* - SuSFS LKM would refuse to load"; exit 1 ;;
-          esac
 
       - name: Save ccache
         if: ${{ always() && steps.ccache-restore.outputs.cache-hit != 'true' }}
@@ -739,8 +705,6 @@ jobs:
 
           if [[ "${{ env.SUSFS }}" == true ]]; then
             ZIP_NAME="${ZIP_NAME}-SuSFS"
-          elif [[ "${{ matrix.ksu_type }}" == "KernelSU-Next-LKM" ]]; then
-            ZIP_NAME="${ZIP_NAME}-SuSFS"
           fi
 
           if [[ "${{ env.NOMOUNT }}" == true ]]; then
@@ -773,11 +737,11 @@ jobs:
           # "<repo> <branch> <workflow file> <artifact name regex>", tried in order
           case "$KSU_TYPE" in
             "Official-KernelSU") CANDS=("tiann/KernelSU main build-manager.yml ^manager$") ;;
-            "KernelSU-Next"|"KernelSU-Next-LKM")
+            "KernelSU-Next")
               CANDS=()
               [[ "${SUSFS}" == true ]] && CANDS+=("pershoot/KernelSU-Next dev-susfs build-manager-ci.yml ^manager$")
               CANDS+=("KernelSU-Next/KernelSU-Next dev build-manager-ci.yml ^manager$") ;;
-            "BakaSU") CANDS=("Baka-SU/BakaSU sync-susfs build-manager.yml ^Manager-release$") ;;
+            "BakaSU") CANDS=("Baka-SU/BakaSU main build-manager.yml ^Manager-release$") ;;
             *) echo "==> No manager CI known for ${KSU_TYPE}"; exit 0 ;;
           esac
 
@@ -871,66 +835,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  Build_SuSFS_LKM:
-    needs: Determine_Matrix
-    if: ${{ inputs.manager_kernelsu_next_lkm }}
-    name: Fetch SuSFS LKM module ZIP
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      LKM_REPO: inforcqb/susfs4ksu-lkm
-    steps:
-      - name: Get official susfs_guard_lkm module ZIP (fallback - matsuzaka-yuki wrapper)
-        run: |
-          set -euo pipefail
-          if [[ -n "${{ inputs.susfs_lkm_tag }}" ]]; then
-            REL_JSON=$(gh api "repos/${LKM_REPO}/releases/tags/${{ inputs.susfs_lkm_tag }}")
-          else
-            REL_JSON=$(gh api "repos/${LKM_REPO}/releases/latest")
-          fi
-          TAG=$(jq -r '.tag_name' <<<"$REL_JSON")
-          ASSET=$(jq -r '.assets[].name | select(test("^susfs_guard_lkm-module-.*-arm64\\.zip$"))' <<<"$REL_JSON" | head -n1)
-          echo "==> ${LKM_REPO} release: ${TAG}"
-
-          if [[ -n "$ASSET" ]]; then
-            gh release download "$TAG" -R "$LKM_REPO" -p "$ASSET" -D lkm-dl
-            unzip -Z1 "lkm-dl/${ASSET}" > lkm-list.txt
-            grep -qx 'lib/susfs_guard_lkm-android12-5.10.ko' lkm-list.txt \
-              || { echo "::error::${ASSET} has no android12-5.10 .ko"; exit 1; }
-            OUT="SuSFS-LKM_${TAG}.zip"
-            cp "lkm-dl/${ASSET}" "$OUT"
-            echo "==> Using official upstream module ${ASSET}"
-          else
-            echo "::warning::${TAG} has no official module ZIP - falling back to matsuzaka-yuki/susfs-lkm-module (pinned upstream build)."
-            git clone --depth=1 https://github.com/matsuzaka-yuki/susfs-lkm-module.git lkm
-            export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
-            if [[ -z "$ANDROID_NDK_HOME" || ! -d "$ANDROID_NDK_HOME" ]]; then
-              wget -q https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
-              unzip -q android-ndk-r27d-linux.zip -d "$HOME"
-              export ANDROID_NDK_HOME="$HOME/android-ndk-r27d"
-            fi
-            (cd lkm && python3 tools/build.py)
-            WRAP_TAG=$(sed -n 's/^TAG = "\(.*\)"$/\1/p' lkm/tools/build.py)
-            OUT="SuSFS-LKM_${WRAP_TAG}_wrapper-$(git -C lkm rev-parse --short HEAD).zip"
-            cp lkm/dist/*.zip "$OUT"
-          fi
-          echo "==> Built ${OUT}"
-          unzip -l "$OUT"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: build-susfs-lkm
-          path: SuSFS-LKM_*.zip
-          retention-days: 1
-
   Create_Release:
     name: Create combined GitHub Release
-    needs: [Build_Kernel_Marble, Build_SuSFS_LKM]
+    needs: Build_Kernel_Marble
 
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
@@ -1034,14 +944,6 @@ jobs:
             exit 1
           fi
 
-          SUSFS_LKM_ZIP=$(find . -type f -name 'SuSFS-LKM_*.zip' | head -n1)
-          if [[ -n "$SUSFS_LKM_ZIP" ]]; then
-            ASSETS+=("$SUSFS_LKM_ZIP")
-            susfs_lkm_checkbox="Supported ($(basename "$SUSFS_LKM_ZIP"), for KernelSU-Next-LKM zip only)"
-          else
-            susfs_lkm_checkbox="Not built"
-          fi
-
           MODES_SELECTED=()
           [[ "${{ inputs.full_build }}" == true ]] && MODES_SELECTED+=("FULL")
           [[ "${{ inputs.core_build }}" == true ]] && MODES_SELECTED+=("CORE")
@@ -1081,7 +983,7 @@ jobs:
            | | |
            |:---|:---|
            | 📱 Device | POCO F5 (marble) • Redmi Note 12 Turbo (marble) |
-           | 🟠 ROM Support | HyperOS,ColorOS,OxygenOS |
+           | 🟠 ROM Support | HyperOS,ColorOS,OxygenOS,AOSPA PARANOID |
            | 🧰 Kernel Name | ${KERNEL_NAME}
            | 🔧 Kernel Base | ${KERNEL_BASE_VERSION} |
            | 🛠️ Build Scope | ZIP |
@@ -1089,7 +991,6 @@ jobs:
            | 📦 Source | ${{ inputs.kernel_source }} |
            | 🔗 Kernel branch | ${{ inputs.kernel_branch }}@[${KERNEL_COMMIT}](${KERNEL_COMMIT_URL})
            | ⚙️ SuSFS Version | ${susfs_checkbox}
-           | 🧩 SuSFS LKM | ${susfs_lkm_checkbox} |
            | 🛡️ Baseband Guard | Supported (Full Only) |
            | 🖥️ Droidspaces | Supported (Full Only) |
            | ⚙️ Re-Kernel (Netlink) | ${rekernel_netlink_checkbox}
@@ -1108,8 +1009,6 @@ jobs:
            |:---|:---:|:---:|:---:|:---:|:---:|:---:|
            | **FULL** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
            | **CORE** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
-
-           > **KernelSU-Next-LKM**: SuSFS is NOT built in. Flash the kernel zip, then install \`SuSFS-LKM_*.zip\` as a KernelSU module and reboot. Never combine it with a built-in SuSFS kernel.
 
            ---
 
