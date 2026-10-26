@@ -776,8 +776,9 @@ jobs:
           cp lkm-src/kernel/susfs_guard_lkm.ko lkm-out/susfs_guard_lkm-android12-5.10.ko
 
           OUT="SuSFS-LKM_marble-${KERNEL_BASE_VERSION}-${TAG}-${KERNEL_COMMIT}.zip"
+          # Only the 4 args every tagged pack_module.py accepts (--sha/--run-id exist on main only)
           python3 lkm-src/tools/pack_module.py --ko-dir lkm-out --insmod lkm-out/susfs_insmod \
-            --tag "${TAG}-marble" --sha "$(git -C lkm-src rev-parse HEAD)" --out "$OUT"
+            --tag "${TAG}-marble" --out "$OUT"
           {
             echo "SUSFS_LKM_ZIP=${OUT}"
             echo "SUSFS_LKM_TAG=${TAG}"
